@@ -84,7 +84,7 @@ end
 class Client_totals
     @@allClients = Array.new
 
-    attr_accessor :id, :first_order_at, :last_order_at, :total_spent, :total_time, :orders_count
+    attr_accessor :id, :first_order_at, :last_order_at, :total_spent, :total_time, :orders_count, :firstOrderProducts
 
     def self.all_clients
         @@allClients
@@ -97,6 +97,7 @@ class Client_totals
         @last_order_at = order.created_at
         @total_spent = order.customer.total_spent.to_i
         @total_time = 0
+        @firstOrderProducts = order.line_items
 
         #by clean code, no logic should be here. Iam sorry =/
         addOrChange()
@@ -119,6 +120,7 @@ class Client_totals
         #puts ("First order at:").concat(@@allClients[foundIndex].first_order_at)
         if Time.iso8601(@first_order_at) < Time.iso8601(@@allClients[foundIndex].first_order_at)
             @@allClients[foundIndex].first_order_at = @first_order_at
+            @@allClients[foundIndex].firstOrderProducts = @firstOrderProducts
             #puts "first order changed"
         end
 
@@ -131,6 +133,69 @@ class Client_totals
 
     def updateTotalTime(foundIndex)
         @@allClients[foundIndex].total_time = Time.iso8601(@@allClients[foundIndex].last_order_at) - Time.iso8601(@@allClients[foundIndex].first_order_at)
+    end
+end
+
+class Product_totals
+    @@allProducts = Array.new
+
+    attr_accessor :id, :buyers, :total_sold, :total_price, :avg_price, :unique_buyers, :times_on_first_order, :times_bought
+
+    def self.all_products
+        @@allProducts
+    end
+
+    def self.updateTimesOnFirstOrder(allClients)
+        for client in allClients do
+            for p in 0..(client.firstOrderProducts.length-1) do
+                foundIndex = @@allProducts.index { |product| product.id == client.firstOrderProducts[p].product_id }
+                if foundIndex != nil
+                    @@allProducts[foundIndex].times_on_first_order = @@allProducts[foundIndex].times_on_first_order + 1
+                end
+            end
+        end
+    end
+
+    def initialize(lineItem, clientId)
+        @id = lineItem.product_id
+        @name = lineItem.name
+        @total_sold = lineItem.quantity
+        @total_price = lineItem.price.to_f * lineItem.quantity.to_i
+        @avg_price = 0
+        @unique_buyers = 1
+        @buyers = [clientId]
+        @times_on_first_order = 0
+        @times_bought = 1
+
+        #by clean code, no logic should be here. Iam sorry =/
+        addOrChange()
+    end
+
+    def addOrChange()
+        foundIndex = @@allProducts.index { |product| product.id == @id }
+        if foundIndex == nil
+            @@allProducts << self
+            updateTotals(@@allProducts.length() - 1)
+            #puts "#{id} added"
+        else
+            #puts "#{foundIndex} found"
+            updateTotals(foundIndex)
+            updateUniqueBuyers(foundIndex)
+        end
+    end
+
+    def updateTotals(foundIndex)
+        @@allProducts[foundIndex].total_sold = @@allProducts[foundIndex].total_sold + @total_sold
+        @@allProducts[foundIndex].total_price = @@allProducts[foundIndex].total_price + @total_price
+        @@allProducts[foundIndex].times_bought = @@allProducts[foundIndex].times_bought + 1
+    end
+
+    def updateUniqueBuyers(foundIndex)
+        foundBuyer = @@allProducts[foundIndex].buyers.index { |buyerid| buyerid == @buyers[0] }
+        if foundBuyer == nil
+            @@allProducts[foundIndex].buyers << @buyers[0]
+            #puts "#{buyers[0]} buyerId added"
+        end
     end
 end
 
@@ -158,6 +223,10 @@ class Dashboard
         ltv = LifeTimeValue.new(Client_totals.all_clients)
         ltv.calculate()
         ltv.showAll()
+
+        Product_totals.updateTimesOnFirstOrder(Client_totals.all_clients)
+
+        puts Product_totals.all_products.to_s
     end
 
     def countOrders(orders)
@@ -176,6 +245,12 @@ class Dashboard
             end
 
             Client_totals.new(orders[i])
+
+            for p in 0..(orders[i].line_items.length-1) do
+
+                Product_totals.new(orders[i].line_items[p], orders[i].customer.id)
+
+            end
         end
     end
 
