@@ -1,21 +1,3 @@
-#interfaces use raise NotImplementedError, "Implement this method in a child class"
-#or new gems
-# deciding to not use here
-
-#idealy:
-#vr class to check placed order (meaning some business definition)
-#iterator using this vr class along with ltv and productiterator
-
-#client_total class, used to keep the first and last time they buy, total spent
-
-#ltv class, should use the client_total, provide totalization afterwards
-
-#productiterator should iterate products adding with
-# a new product_total class, to sum quantity sold by product, value other
-# possible business needs, as shipment, avg quantity by order
-
-#dashboard using this iterator composer
-
 require 'shopify_api'
 
 ActiveSupport::Deprecation.silenced = true
@@ -25,9 +7,14 @@ ShopifyAPI::Base.site = "https://#{ENV['SHOPIFY_API_KEY']}:#{ENV['SHOPIFY_PASSWO
 ShopifyAPI::Base.api_version = '2020-10'
 
 class Dashboard
-    #not the design I wanted, the dashboard should be a composer, \
+    #not the design I wanted, the dashboard should be a composer,
     #but it's taking too long to discover the best ways to use ruby classes
+    
     #would have a lot of improvements to do for testing and clean code
+
+    #idealy, any characteristic could be mapped to a validation rule class
+    #after the first layer of characteristics, composer-like classes, could cross information
+    #between,  eg. clients vs products, consuming the already updated interfaces...
 
     attr_reader :total_placed_orders,:total_cancel,:total_confirmed
 
