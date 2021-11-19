@@ -24,61 +24,83 @@ ShopifyAPI::Base.site = "https://#{ENV['SHOPIFY_API_KEY']}:#{ENV['SHOPIFY_PASSWO
 
 ShopifyAPI::Base.api_version = '2020-10'
 
-class LifeTimeValue
-    attr_reader :ltv, :clv, :profit_margin, :total_time, :total_spent, :total_clients, :total_orders, :total_repeatable_orders, :total_repeatable_spent, :avg_spent_by_client, :avg_spent_by_order, :avg_time, :avg_time_between_orders
-    @allClients = Array.new
-    
-    def initialize(allClients)
-        @allClients = allClients
-        @total_clients = @allClients.length()
-        @total_time = 0
-        @total_spent = 0
-        @total_orders = 0
-        @total_repeatable_orders = 0
-        @total_repeatable_spent = 0
-        @avg_spent_by_client = 0
-        @avg_spent_by_order = 0
-        @avg_time = 0
-        @avg_time_between_orders = 0
-        @ltv = 0
-        @clv = 0
-        @profit_margin = 1.8
+class Dashboard
+    #not the design I wanted, the dashboard should be a composer, \
+    #but it's taking too long to discover the best ways to use ruby classes
+    #would have a lot of improvements to do for testing and clean code
 
-        puts "total_clients: #{total_clients}"
+    attr_reader :total_placed_orders,:total_cancel,:total_confirmed
+
+    def initialize()
+        @orders = ShopifyAPI::Order.find(:all, params: { limit: 25 })
+        #TODO should only return the fields being used!
+        #TODO save locally and set a timeout for next search or create an event to search again
+        countPlacedOrders()
     end
 
-    def calculate()
-        for client in @allClients do
-            @total_time = @total_time + client.total_time
-            @total_spent = @total_spent + client.total_spent
-            @total_orders = @total_orders + client.orders_count
+    def countPlacedOrders
+        @total_placed_orders = 0
+        @total_cancel = 0
+        @total_confirmed = 0
 
-            if client.orders_count > 1
-                @total_repeatable_orders = @total_repeatable_orders + client.orders_count
-                @total_repeatable_spent = @total_repeatable_spent + client.total_spent
-            end
+        countOrders(@orders)
+
+        while @orders.next_page?
+            @orders = @orders.fetch_next_page
+            countOrders(@orders)
         end
 
-        @avg_spent_by_client = @total_spent / @total_clients
-        @avg_spent_by_order = @total_spent / @total_orders
-        @avg_time = @total_time / @total_repeatable_orders
+        ltv = LifeTimeValue.new(Client_totals.all_clients)
+        ltv.calculate()
+        ltv.showAll()
 
-        @ltv = @avg_spent_by_order * @total_repeatable_orders * @avg_time
-        @clv = @ltv * @profit_margin
+        Product_totals.updateTimesOnFirstOrder(Client_totals.all_clients)
+
+        reating = RepeatProducts.new(Product_totals.all_products)
+        reating.calculate()
+        reating.showAll()
     end
 
-    def showAll()
-        puts "total_time: #{total_time}
-total_spent: #{total_spent}
-total_clients: #{total_clients}
-total_orders: #{total_orders} 
-total_repeatable_orders: #{total_repeatable_orders} 
-avg_spent_by_client: #{avg_spent_by_client}
-avg_spent_by_order: #{avg_spent_by_order} 
-avg_time_between_orders: #{avg_time}
-LTV: #{ltv}
-CLV (profit margin: #{profit_margin}): #{clv}"
-    end    
+    def countOrders(orders)
+        for i in 0..(orders.length-1) do
+
+            if is_placed_order?(orders[i])
+                @total_placed_orders += 1
+            end
+
+            if is_canceled_order?(orders[i])
+                @total_cancel += 1
+            end
+
+            if is_confirmed_order?(orders[i])
+                @total_confirmed += 1
+            end
+
+            Client_totals.new(orders[i])
+
+            for p in 0..(orders[i].line_items.length-1) do
+
+                Product_totals.new(orders[i].line_items[p], orders[i].customer.id)
+
+            end
+        end
+    end
+
+    def showTotals
+        puts "total_confirmed:#{total_confirmed} \n total_placed_orders:#{total_placed_orders} \n total_cancel:#{total_cancel}"
+    end
+
+    def is_placed_order?(order)
+        order.confirmed && !order.test && order.cancel_reason.to_s.length == 0
+    end
+    
+    def is_canceled_order?(order)
+        order.cancel_reason.to_s.length > 0
+    end
+    
+    def is_confirmed_order?(order)
+        order.confirmed
+    end
 end
 
 class Client_totals
@@ -136,10 +158,67 @@ class Client_totals
     end
 end
 
+class LifeTimeValue
+    attr_reader :ltv, :clv, :profit_margin, :total_time, :total_spent, :total_clients, :total_orders, :total_repeatable_orders, :total_repeatable_spent, :avg_spent_by_client, :avg_spent_by_order, :avg_time, :avg_time_between_orders
+    @allClients = Array.new
+    
+    def initialize(allClients)
+        @allClients = allClients
+        @total_clients = @allClients.length()
+        @total_time = 0
+        @total_spent = 0
+        @total_orders = 0
+        @total_repeatable_orders = 0
+        @total_repeatable_spent = 0
+        @avg_spent_by_client = 0
+        @avg_spent_by_order = 0
+        @avg_time = 0 #output on secs
+        @avg_time_between_orders = 0
+        @ltv = 0
+        @clv = 0
+        @profit_margin = 1.8
+
+        puts "total_clients: #{total_clients}"
+    end
+
+    def calculate()
+        for client in @allClients do
+            @total_time = @total_time + client.total_time
+            @total_spent = @total_spent + client.total_spent
+            @total_orders = @total_orders + client.orders_count
+
+            if client.orders_count > 1
+                @total_repeatable_orders = @total_repeatable_orders + client.orders_count
+                @total_repeatable_spent = @total_repeatable_spent + client.total_spent
+            end
+        end
+
+        @avg_spent_by_client = @total_spent / @total_clients
+        @avg_spent_by_order = @total_spent / @total_orders
+        @avg_time = @total_time / @total_repeatable_orders
+
+        @ltv = @avg_spent_by_order * @total_repeatable_orders * @avg_time
+        @clv = @ltv * @profit_margin
+    end
+
+    def showAll()
+        puts "total_time: #{total_time}
+total_spent: #{total_spent}
+total_clients: #{total_clients}
+total_orders: #{total_orders} 
+total_repeatable_orders: #{total_repeatable_orders} 
+avg_spent_by_client: #{avg_spent_by_client}
+avg_spent_by_order: #{avg_spent_by_order} 
+avg_time_between_orders: #{avg_time}
+LTV: #{ltv}
+CLV (profit margin: #{profit_margin}): #{clv}"
+    end
+end
+
 class Product_totals
     @@allProducts = Array.new
 
-    attr_accessor :id, :buyers, :total_sold, :total_price, :avg_price, :unique_buyers, :times_on_first_order, :times_bought
+    attr_accessor :id, :name, :buyers, :total_sold, :total_value, :unique_buyers, :times_on_first_order, :times_bought, :avg_price
 
     def self.all_products
         @@allProducts
@@ -156,11 +235,17 @@ class Product_totals
         end
     end
 
+    def self.calculateSelfAverages()
+        for p in 0..(@@allProducts.length-1) do
+            @@allProducts[p].avg_price = @@allProducts[p].total_value / @@allProducts[p].total_sold
+        end
+    end
+
     def initialize(lineItem, clientId)
         @id = lineItem.product_id
         @name = lineItem.name
         @total_sold = lineItem.quantity
-        @total_price = lineItem.price.to_f * lineItem.quantity.to_i
+        @total_value = lineItem.price.to_f * lineItem.quantity.to_i
         @avg_price = 0
         @unique_buyers = 1
         @buyers = [clientId]
@@ -186,7 +271,7 @@ class Product_totals
 
     def updateTotals(foundIndex)
         @@allProducts[foundIndex].total_sold = @@allProducts[foundIndex].total_sold + @total_sold
-        @@allProducts[foundIndex].total_price = @@allProducts[foundIndex].total_price + @total_price
+        @@allProducts[foundIndex].total_value = @@allProducts[foundIndex].total_value + @total_value
         @@allProducts[foundIndex].times_bought = @@allProducts[foundIndex].times_bought + 1
     end
 
@@ -199,93 +284,58 @@ class Product_totals
     end
 end
 
-class Dashboard
-    attr_reader :total_placed_orders,:total_cancel,:total_confirmed
+class RepeatProducts
+    attr_reader :total_revenue, :total_products
+    @allProducts = Array.new
+    @total_products = 0
+    @total_revenue = 0
+    
+    def initialize(allProducts)
+        @allProducts = allProducts
+        @total_products = @allProducts.length()
+        @total_revenue = 0
 
-    def initialize()
-        @orders = ShopifyAPI::Order.find(:all, params: { limit: 25 })
-        #TODO should only return the fields being used1
-        countPlacedOrders()
+        puts "total_products: #{total_products}"
     end
 
-    def countPlacedOrders
-        @total_placed_orders = 0
-        @total_cancel = 0
-        @total_confirmed = 0
-
-        countOrders(@orders)
-
-        while @orders.next_page?
-            @orders = @orders.fetch_next_page
-            countOrders(@orders)
+    def calculate()
+        for product in @allProducts do
+            @total_revenue = @total_revenue + product.total_value
         end
 
-        ltv = LifeTimeValue.new(Client_totals.all_clients)
-        ltv.calculate()
-        ltv.showAll()
-
-        Product_totals.updateTimesOnFirstOrder(Client_totals.all_clients)
-
-        puts Product_totals.all_products.to_s
+        Product_totals.calculateSelfAverages()
     end
 
-    def countOrders(orders)
-        for i in 0..(orders.length-1) do
+    def showAll()
+        showMostRevenue()
+        showAvgPriceQuantity()
+    end
 
-            if is_placed_order?(orders[i])
-                @total_placed_orders += 1
-            end
+    def showMostRevenue()
+        sorted = @allProducts.sort {|a,b| b.total_value <=> a.total_value}
+        puts "\nMost Revenue by order:"
+        puts "%23s | %13s | %9s" % ["Product", "Total Revenue", "Revenue %"]
+        for i in 0..(sorted.length-1) do
+            revenuePercentage = sorted[i].total_value / @total_revenue * 100
 
-            if is_canceled_order?(orders[i])
-                @total_cancel += 1
-            end
-
-            if is_confirmed_order?(orders[i])
-                @total_confirmed += 1
-            end
-
-            Client_totals.new(orders[i])
-
-            for p in 0..(orders[i].line_items.length-1) do
-
-                Product_totals.new(orders[i].line_items[p], orders[i].customer.id)
-
-            end
+            puts "%23s | %3.2f USD | %2.2f" % [sorted[i].name, sorted[i].total_value, revenuePercentage]
         end
+        puts "\n"
     end
 
-    def showTotals
-        puts "total_confirmed:#{total_confirmed} \n total_placed_orders:#{total_placed_orders} \n total_cancel:#{total_cancel}"
-    end
-
-    def is_placed_order?(order)
-        order.confirmed && !order.test && order.cancel_reason.to_s.length == 0
-    end
-    
-    def is_canceled_order?(order)
-        order.cancel_reason.to_s.length > 0
-    end
-    
-    def is_confirmed_order?(order)
-        order.confirmed
+    def showAvgPriceQuantity()
+        sorted = @allProducts.sort {|a,b| b.avg_price <=> a.avg_price}
+        puts "\nAvgs price, quantity, chance to be on first order:"
+        puts "%23s | %9s | %6s | %s | %s | %s" % ["Product", "Avg Price", "AvgQnt", "Total Sold", "Times bought", "Chance to be 1st order"]
+        for i in 0..(sorted.length-1) do
+            avg_quantity_in_order = sorted[i].total_sold / sorted[i].times_bought
+            chance = sorted[i].times_on_first_order / sorted[i].buyers.length().to_f * 100
+            puts "%23s | %3.2f USD | %2.2f | %d | %d | %2.2f" % [sorted[i].name, sorted[i].avg_price, avg_quantity_in_order, sorted[i].total_sold, sorted[i].times_bought, chance]
+        end
+        puts "\n"
     end
 end
 
-#cancel_reason
-#confirmed
-#test = false
-
-#price related:
-#subtotal_price
-#total_discount
-#total_price
-#presentment_currency -> might have different currencies, check total price_usb make sense
-
-#financial_status = paid?
-
-#orders = ShopifyAPI::Order.find(:all, params: { limit: 250 })
-
+#to test:
 #irb -r './shopify_tst.rb'
 #dash = Dashboard.new
-#dash.countPlacedOrders
-#dash.total_placed_orders
