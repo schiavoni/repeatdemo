@@ -103,10 +103,25 @@ class Dashboard
     end
 end
 
+class SimpleOrder
+    attr_accessor :created_at,:products
+
+    def initialize(order)
+        @created_at = Time.iso8601(order.created_at).to_i
+        @products = Array.new
+
+        for p in 0..(order.line_items.length-1) do
+
+            @products << order.line_items[p].product_id
+
+        end
+    end
+end
+
 class Client_totals
     @@allClients = Array.new
 
-    attr_accessor :id, :first_order_at, :last_order_at, :total_spent, :total_time, :orders_count, :firstOrderProducts
+    attr_accessor :id, :first_order_at, :last_order_at, :total_spent, :total_time, :orders_count, :orders, :firstOrderProducts
 
     def self.all_clients
         @@allClients
@@ -120,6 +135,7 @@ class Client_totals
         @total_spent = order.customer.total_spent.to_i
         @total_time = 0
         @firstOrderProducts = order.line_items
+        @orders = [SimpleOrder.new(order)]
 
         #by clean code, no logic should be here. Iam sorry =/
         addOrChange()
@@ -135,6 +151,7 @@ class Client_totals
             #puts "#{foundIndex} found"
             updateDates(foundIndex)
             updateTotalTime(foundIndex)
+            @@allClients[foundIndex].orders << @orders[0]
         end
     end
 
@@ -154,7 +171,7 @@ class Client_totals
     end
 
     def updateTotalTime(foundIndex)
-        @@allClients[foundIndex].total_time = Time.iso8601(@@allClients[foundIndex].last_order_at) - Time.iso8601(@@allClients[foundIndex].first_order_at)
+        @@allClients[foundIndex].total_time = Time.iso8601(@@allClients[foundIndex].last_order_at).to_i - Time.iso8601(@@allClients[foundIndex].first_order_at).to_i
     end
 end
 
@@ -202,23 +219,23 @@ class LifeTimeValue
     end
 
     def showAll()
-        puts "total_time: #{total_time}
+        print "\ntotal_time: #{total_time}
 total_spent: #{total_spent}
 total_clients: #{total_clients}
 total_orders: #{total_orders} 
 total_repeatable_orders: #{total_repeatable_orders} 
-avg_spent_by_client: #{avg_spent_by_client}
-avg_spent_by_order: #{avg_spent_by_order} 
-avg_time_between_orders: #{avg_time}
+avg_spent_by_client (USD): #{avg_spent_by_client}
+avg_spent_by_order (USD): #{avg_spent_by_order} 
+avg_time_between_orders (s): #{avg_time}
 LTV: #{ltv}
-CLV (profit margin: #{profit_margin}): #{clv}"
+CLV (profit margin: #{profit_margin}): #{clv} \n"
     end
 end
 
 class Product_totals
     @@allProducts = Array.new
 
-    attr_accessor :id, :name, :buyers, :total_sold, :total_value, :unique_buyers, :times_on_first_order, :times_bought, :avg_price
+    attr_accessor :id, :name, :buyers, :ordersTime, :total_orders, :replanInterval, :avgReplanInt, :total_sold, :total_value, :unique_buyers, :times_on_first_order, :times_bought, :avg_price
 
     def self.all_products
         @@allProducts
@@ -233,11 +250,50 @@ class Product_totals
                 end
             end
         end
+
+        for p in 0..(@@allProducts.length-1) do
+            for client in allClients do
+                sortedOrders = client.orders.sort {|a,b| a.created_at <=> b.created_at}
+                buyTimes = []
+
+                for o in 0..(sortedOrders.length-1) do
+                    foundIndex = sortedOrders[o].products.index { |product| product == @@allProducts[p].id }
+                    if foundIndex != nil
+                        buyTimes << sortedOrders[o].created_at
+                    end
+                end
+
+                if buyTimes.length > 0
+                    @@allProducts[p].ordersTime << buyTimes
+                end
+            end
+
+            @@allProducts[p].replanInterval = []
+            @@allProducts[p].total_orders = 0
+            for t in 0..(@@allProducts[p].ordersTime.length-1) do
+                @@allProducts[p].total_orders = @@allProducts[p].total_orders + @@allProducts[p].ordersTime[t].length
+                if @@allProducts[p].ordersTime[t].length > 1
+
+                    for tt in 0..(@@allProducts[p].ordersTime[t].length-2) do
+                        @@allProducts[p].replanInterval << @@allProducts[p].ordersTime[t][(tt+1)] - @@allProducts[p].ordersTime[t][tt]
+                    end
+                end
+            end
+        end
     end
 
     def self.calculateSelfAverages()
         for p in 0..(@@allProducts.length-1) do
             @@allProducts[p].avg_price = @@allProducts[p].total_value / @@allProducts[p].total_sold
+            
+            @@allProducts[p].avgReplanInt = 0
+            if @@allProducts[p].replanInterval.length > 0
+                totalReplanInt = 0
+                for r in 0..(@@allProducts[p].replanInterval.length-1) do
+                    totalReplanInt = totalReplanInt + @@allProducts[p].replanInterval[r]
+                end
+                @@allProducts[p].avgReplanInt = totalReplanInt / @@allProducts[p].replanInterval.length
+            end
         end
     end
 
@@ -249,8 +305,12 @@ class Product_totals
         @avg_price = 0
         @unique_buyers = 1
         @buyers = [clientId]
+        @ordersTime = []
+        @replanInterval = []
         @times_on_first_order = 0
+        @avgReplanInt = 0
         @times_bought = 1
+        @total_orders = 0
 
         #by clean code, no logic should be here. Iam sorry =/
         addOrChange()
@@ -309,6 +369,7 @@ class RepeatProducts
     def showAll()
         showMostRevenue()
         showAvgPriceQuantity()
+        showReplanishmentInterval()
     end
 
     def showMostRevenue()
@@ -326,11 +387,24 @@ class RepeatProducts
     def showAvgPriceQuantity()
         sorted = @allProducts.sort {|a,b| b.avg_price <=> a.avg_price}
         puts "\nAvgs price, quantity, chance to be on first order:"
-        puts "%23s | %9s | %6s | %s | %s | %s" % ["Product", "Avg Price", "AvgQnt", "Total Sold", "Times bought", "Chance to be 1st order"]
+        puts "%23s | %9s | %6s | %s | %s | %s | %s | %s" % ["Product", "Avg Price", "AvgQnt", "Total Sold", "Times bought", "Chance to be 1st order", "Unique buyers", "Avg Replanishment Interval (s)"]
         for i in 0..(sorted.length-1) do
             avg_quantity_in_order = sorted[i].total_sold / sorted[i].times_bought
             chance = sorted[i].times_on_first_order / sorted[i].buyers.length().to_f * 100
-            puts "%23s | %3.2f USD | %2.2f | %d | %d | %2.2f" % [sorted[i].name, sorted[i].avg_price, avg_quantity_in_order, sorted[i].total_sold, sorted[i].times_bought, chance]
+            puts "%23s | %3.2f USD | %2.2f | %d | %d | %2.2f | %d | %0.2f" % [sorted[i].name, sorted[i].avg_price, avg_quantity_in_order, sorted[i].total_sold, sorted[i].times_bought, chance, sorted[i].buyers.length(), sorted[i].avgReplanInt]
+        end
+        puts "\n"
+    end
+
+    def showReplanishmentInterval()
+        sorted = @allProducts.sort_by do |product|
+            [(product.avgReplanInt == 0 ? 1 : 0), -product.total_orders, -product.avgReplanInt]
+        end
+        
+        puts "\nReplanishment Intervals, 0 = insufficient data:"
+        puts "%23s | %s | %s | %s" % ["Product", "# Orders", "Unique buyers", "Avg Replanishment Interval (s)"]
+        for i in 0..(sorted.length-1) do
+            puts "%23s | %d | %d | %d " % [sorted[i].name, sorted[i].total_orders, sorted[i].buyers.length(), sorted[i].avgReplanInt ]
         end
         puts "\n"
     end
