@@ -1,3 +1,21 @@
+#interfaces use raise NotImplementedError, "Implement this method in a child class"
+#or new gems
+# deciding to not use here
+
+#idealy:
+#vr class to check placed order (meaning some business definition)
+#iterator using this vr class along with ltv and productiterator
+
+#client_total class, used to keep the first and last time they buy, total spent
+
+#ltv class, should use the client_total, provide totalization afterwards
+
+#productiterator should iterate products adding with
+# a new product_total class, to sum quantity sold by product, value other
+# possible business needs, as shipment, avg quantity by order
+
+#dashboard using this iterator composer
+
 require 'shopify_api'
 
 ActiveSupport::Deprecation.silenced = true
@@ -7,7 +25,7 @@ ShopifyAPI::Base.site = "https://#{ENV['SHOPIFY_API_KEY']}:#{ENV['SHOPIFY_PASSWO
 ShopifyAPI::Base.api_version = '2020-10'
 
 class LifeTimeValue
-    attr_reader :total_time, :total_spent, :total_clients, :total_orders, :total_repeatable_orders, :avg_spent_by_client, :avg_spent_by_order, :avg_time, :avg_time_between_orders, :avg_orders_count_by_time
+    attr_reader :ltv, :clv, :profit_margin, :total_time, :total_spent, :total_clients, :total_orders, :total_repeatable_orders, :total_repeatable_spent, :avg_spent_by_client, :avg_spent_by_order, :avg_time, :avg_time_between_orders
     @allClients = Array.new
     
     def initialize(allClients)
@@ -17,11 +35,14 @@ class LifeTimeValue
         @total_spent = 0
         @total_orders = 0
         @total_repeatable_orders = 0
+        @total_repeatable_spent = 0
         @avg_spent_by_client = 0
         @avg_spent_by_order = 0
         @avg_time = 0
         @avg_time_between_orders = 0
-        @avg_orders_count_by_time = 0
+        @ltv = 0
+        @clv = 0
+        @profit_margin = 1.8
 
         puts "total_clients: #{total_clients}"
     end
@@ -34,12 +55,16 @@ class LifeTimeValue
 
             if client.orders_count > 1
                 @total_repeatable_orders = @total_repeatable_orders + client.orders_count
+                @total_repeatable_spent = @total_repeatable_spent + client.total_spent
             end
         end
 
         @avg_spent_by_client = @total_spent / @total_clients
         @avg_spent_by_order = @total_spent / @total_orders
         @avg_time = @total_time / @total_repeatable_orders
+
+        @ltv = @avg_spent_by_order * @total_repeatable_orders * @avg_time
+        @clv = @ltv * @profit_margin
     end
 
     def showAll()
@@ -47,41 +72,13 @@ class LifeTimeValue
 total_spent: #{total_spent}
 total_clients: #{total_clients}
 total_orders: #{total_orders} 
+total_repeatable_orders: #{total_repeatable_orders} 
 avg_spent_by_client: #{avg_spent_by_client}
 avg_spent_by_order: #{avg_spent_by_order} 
-avg_time: #{avg_time}
-avg_orders_count_by_time: #{avg_orders_count_by_time}"
+avg_time_between_orders: #{avg_time}
+LTV: #{ltv}
+CLV (profit margin: #{profit_margin}): #{clv}"
     end    
-end
-
-#interfaces use raise NotImplementedError, "Implement this method in a child class"
-#or new gems
-# deciding to not use here
-
-#idealy:
-#vr class to check placed order (meaning some business definition)
-#iterator using this vr class along with ltv and productiterator
-
-#client_total class, used to keep the first and last time they buy, total spent
-
-#ltv  class, should use the client_total, provide totalization afterwards
-
-#productiterator should iterate products adding with
-# a new product_total class, to sum quantity sold by product, value other
-# possible business needs, as shipment, avg quantity by order
-
-#dashboard using this iterator composer
-
-def is_placed_order?(order)
-    order.confirmed && !order.test && order.cancel_reason.to_s.length == 0
-end
-
-def is_canceled_order?(order)
-    order.cancel_reason.to_s.length > 0
-end
-
-def is_confirmed_order?(order)
-    order.confirmed
 end
 
 class Client_totals
@@ -179,12 +176,23 @@ class Dashboard
             end
 
             Client_totals.new(orders[i])
-
         end
     end
 
     def showTotals
         puts "total_confirmed:#{total_confirmed} \n total_placed_orders:#{total_placed_orders} \n total_cancel:#{total_cancel}"
+    end
+
+    def is_placed_order?(order)
+        order.confirmed && !order.test && order.cancel_reason.to_s.length == 0
+    end
+    
+    def is_canceled_order?(order)
+        order.cancel_reason.to_s.length > 0
+    end
+    
+    def is_confirmed_order?(order)
+        order.confirmed
     end
 end
 
