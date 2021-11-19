@@ -4,6 +4,10 @@
 
 import React from 'react'
 import ReactDOM from 'react-dom'
+
+import App from '../components/App'
+
+/*
 import PropTypes from 'prop-types'
 
 const Hello = props => (
@@ -18,9 +22,14 @@ Hello.propTypes = {
   name: PropTypes.string
 }
 
+
+    <div>
+      <Hello name="React" />
+    </div>
+*/
 document.addEventListener('DOMContentLoaded', () => {
   ReactDOM.render(
-    <Hello name="React" />,
+    <App />,
     document.body.appendChild(document.createElement('div')),
   )
 })
